@@ -5,6 +5,8 @@ import java.util.List;
 public class ComparisonEntity {
     public String entityClass;
     public String tableName;
+    /** Absolute path to the .java source file, from EntityParser */
+    public String filePath;
     public boolean oracleTableFound;
     public boolean postgresTableFound;
     public List<ComparisonColumn> columns;

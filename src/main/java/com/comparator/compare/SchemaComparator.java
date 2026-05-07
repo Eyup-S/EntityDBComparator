@@ -59,6 +59,7 @@ public class SchemaComparator {
         ComparisonEntity ce = new ComparisonEntity();
         ce.entityClass = entity.fullClassName;
         ce.tableName = entity.tableName;
+        ce.filePath = entity.filePath;
         ce.columns = new ArrayList<>();
 
         // Look up table in both DBs (case-insensitive)
