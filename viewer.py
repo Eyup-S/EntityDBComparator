@@ -1,8 +1,6 @@
 import json
-import platform
-import shutil
-import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 import pandas as pd
@@ -66,32 +64,10 @@ def get_module(file_path: str, project_root: str, module_index: int) -> str:
         return parts[module_index]
     return parts[0] if parts else "unknown"
 
-def open_intellij(file_path: str, idea_exe: str | None):
-    """Launch IntelliJ IDEA with the given file. Fire-and-forget."""
-    if not file_path or not Path(file_path).exists():
-        st.toast(f"File not found: {file_path}", icon="❌")
-        return
-    try:
-        if idea_exe and Path(idea_exe).exists():
-            subprocess.Popen([idea_exe, file_path])
-        elif shutil.which("idea"):
-            subprocess.Popen(["idea", file_path])
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", "-a", "IntelliJ IDEA", file_path])
-        elif platform.system() == "Windows":
-            for candidate in [
-                r"C:\Program Files\JetBrains\IntelliJ IDEA\bin\idea64.exe",
-                r"C:\Program Files\JetBrains\IntelliJ IDEA Community Edition\bin\idea64.exe",
-            ]:
-                if Path(candidate).exists():
-                    subprocess.Popen([candidate, file_path])
-                    return
-            st.toast("IntelliJ IDEA not found. Set the path in ⚙️ Settings.", icon="❌")
-        else:
-            subprocess.Popen(["idea.sh", file_path])
-        st.toast(f"Opening {Path(file_path).name} in IntelliJ…", icon="💡")
-    except Exception as exc:
-        st.toast(f"Could not open IntelliJ: {exc}", icon="❌")
+def idea_url(file_path: str, line: int = 1) -> str:
+    """Build an idea://open?file=...&line=... URL for the registered xdg handler."""
+    encoded = urllib.parse.quote(file_path, safe="")
+    return f"idea://open?file={encoded}&line={line}"
 
 # ── LOB detection ──────────────────────────────────────────────────────────────
 
@@ -149,11 +125,48 @@ with st.sidebar:
         preview_module = parts[idx] if parts else "—"
         st.caption(f"Sample: `{rel}`\n\nModule → **`{preview_module}`**")
 
-    idea_exe = st.text_input(
-        "IntelliJ executable (optional)",
-        placeholder="/Applications/IntelliJ IDEA.app/Contents/MacOS/idea",
-        help="Leave blank to auto-detect.",
-    ).strip() or None
+    with st.expander("💡 IntelliJ setup (Ubuntu / Snap)", expanded=False):
+        st.markdown(
+            "Snap-installed IntelliJ does not register a browser URL handler automatically. "
+            "Run these commands **once** on each Ubuntu machine to register `idea://`:"
+        )
+        st.code(
+            """\
+mkdir -p ~/.local/bin ~/.local/share/applications
+
+# 1. Wrapper script
+cat > ~/.local/bin/idea-url-handler.sh << 'EOF'
+#!/bin/bash
+URL="$1"
+FILE=$(python3 -c "import sys,urllib.parse; u='$URL'; print(urllib.parse.unquote(u.split('file=')[1].split('&')[0]))")
+LINE=$(python3 -c "u='$URL'; print(u.split('line=')[1] if 'line=' in u else '1')")
+intellij-idea-ultimate --line "$LINE" "$FILE" &
+EOF
+chmod +x ~/.local/bin/idea-url-handler.sh
+
+# 2. .desktop file
+cat > ~/.local/share/applications/idea-url-handler.desktop << 'EOF'
+[Desktop Entry]
+Name=IntelliJ IDEA URL Handler
+Exec=/home/$USER/.local/bin/idea-url-handler.sh %u
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/idea;
+EOF
+
+# 3. Register idea:// with xdg
+xdg-mime default idea-url-handler.desktop x-scheme-handler/idea
+update-desktop-database ~/.local/share/applications/
+
+# 4. Test
+xdg-open "idea://open?file=$HOME/.bashrc&line=1"
+""",
+            language="bash",
+        )
+        st.caption(
+            "After step 4, your browser will also handle `idea://` links. "
+            "If Chrome/Firefox asks for permission the first time, click **Allow**."
+        )
 
     st.divider()
 
@@ -404,12 +417,12 @@ with tab_entities:
                 )
             with h2:
                 file_path = entity.get("filePath")
-                if file_path and st.button(
-                    "💡 Open in IDEA",
-                    key=f"idea_{entity['entityClass']}",
-                    help=file_path,
-                ):
-                    open_intellij(file_path, idea_exe)
+                if file_path:
+                    st.link_button(
+                        "💡 Open in IDEA",
+                        url=idea_url(file_path),
+                        help=f"Opens via idea:// handler → {file_path}",
+                    )
 
             # ── DB found status ────────────────────────────────────────────────
             db1, db2 = st.columns(2)
