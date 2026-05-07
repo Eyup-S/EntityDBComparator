@@ -258,7 +258,7 @@ with st.expander("📈 Type Distribution", expanded=False):
             .reset_index(name="count")
         )
         if not java_counts.empty:
-            st.dataframe(java_counts, use_container_width=True, hide_index=True, height=280)
+            st.dataframe(java_counts, width="stretch", hide_index=True, height=280)
 
     with tc2:
         st.markdown("**Oracle column types**")
@@ -274,7 +274,7 @@ with st.expander("📈 Type Distribution", expanded=False):
                 .rename_axis("type")
                 .reset_index(name="count")
             )
-            st.dataframe(oc, use_container_width=True, hide_index=True, height=280)
+            st.dataframe(oc, width="stretch", hide_index=True, height=280)
         else:
             st.caption("No Oracle data")
 
@@ -292,7 +292,7 @@ with st.expander("📈 Type Distribution", expanded=False):
                 .rename_axis("type")
                 .reset_index(name="count")
             )
-            st.dataframe(pc, use_container_width=True, hide_index=True, height=280)
+            st.dataframe(pc, width="stretch", hide_index=True, height=280)
         else:
             st.caption("No Postgres data")
 
@@ -362,7 +362,7 @@ with tab_overview:
     if not df_filtered.empty:
         visible = df_filtered[[c for c in display_cols if c in df_filtered.columns]]
         styled = visible.style.map(color_cell, subset=["Oracle ✓", "Postgres ✓", "Status"])
-        st.dataframe(styled, use_container_width=True, height=520)
+        st.dataframe(styled, width="stretch", height=520)
         st.caption(f"Showing {len(df_filtered)} column(s) across {df_filtered['Entity'].nunique()} entity/entities")
     else:
         st.info("No columns match the current filters.")
@@ -457,7 +457,7 @@ with tab_entities:
                 cdf = pd.DataFrame(col_rows)
                 st.dataframe(
                     cdf.style.map(color_cell, subset=["Oracle ✓", "Postgres ✓", "Status"]),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -512,7 +512,7 @@ with tab_issues:
         idf = idf.sort_values("Status", key=lambda s: s.map(severity), ascending=False)
         st.dataframe(
             idf.style.map(color_cell, subset=["Status"]),
-            use_container_width=True,
+            width="stretch",
             height=520,
             hide_index=True,
         )
