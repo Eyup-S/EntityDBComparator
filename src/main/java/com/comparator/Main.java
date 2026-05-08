@@ -81,20 +81,33 @@ public class Main {
     // -------------------------------------------------------------------------
 
     private static void runOracle(Map<String, String> params, JsonReporter reporter) throws Exception {
-        String url    = require(params, "url");
-        String user   = require(params, "user");
-        String pass   = require(params, "pass");
-        String schema = require(params, "schema");
-        String output = params.getOrDefault("output", "oracle.json");
+        String url        = require(params, "url");
+        String user       = require(params, "user");
+        String pass       = require(params, "pass");
+        String schemaArg  = require(params, "schema");
+        String output     = params.getOrDefault("output", "oracle.json");
 
-        System.out.println("[INFO] Connecting to Oracle: " + url);
+        String[] schemas = schemaArg.split(",");
         DbSchemaExtractor extractor = new DbSchemaExtractor();
-        DbSchema dbSchema = extractor.extractOracle(url, user, pass, schema);
+        DbSchema merged = null;
 
-        dbSchema.extractedAt = now();
-        System.out.println("[INFO] Extracted " + dbSchema.tables.size() + " table(s) from Oracle schema [" + schema + "].");
+        for (String schema : schemas) {
+            schema = schema.trim();
+            System.out.println("[INFO] Connecting to Oracle: " + url + "  schema=" + schema);
+            DbSchema partial = extractor.extractOracle(url, user, pass, schema);
+            if (merged == null) {
+                merged = partial;
+            } else {
+                merged.tables.addAll(partial.tables);
+            }
+            System.out.println("[INFO] Extracted " + partial.tables.size() + " table(s) from Oracle schema [" + schema + "].");
+        }
 
-        reporter.write(dbSchema, output);
+        merged.schemaName = schemaArg;
+        merged.extractedAt = now();
+        System.out.println("[INFO] Total tables across all schemas: " + merged.tables.size());
+
+        reporter.write(merged, output);
     }
 
     // -------------------------------------------------------------------------
@@ -102,20 +115,33 @@ public class Main {
     // -------------------------------------------------------------------------
 
     private static void runPostgres(Map<String, String> params, JsonReporter reporter) throws Exception {
-        String url    = require(params, "url");
-        String user   = require(params, "user");
-        String pass   = require(params, "pass");
-        String schema = params.getOrDefault("schema", "public");
-        String output = params.getOrDefault("output", "postgres.json");
+        String url       = require(params, "url");
+        String user      = require(params, "user");
+        String pass      = require(params, "pass");
+        String schemaArg = params.getOrDefault("schema", "public");
+        String output    = params.getOrDefault("output", "postgres.json");
 
-        System.out.println("[INFO] Connecting to PostgreSQL: " + url);
+        String[] schemas = schemaArg.split(",");
         DbSchemaExtractor extractor = new DbSchemaExtractor();
-        DbSchema dbSchema = extractor.extractPostgres(url, user, pass, schema);
+        DbSchema merged = null;
 
-        dbSchema.extractedAt = now();
-        System.out.println("[INFO] Extracted " + dbSchema.tables.size() + " table(s) from Postgres schema [" + schema + "].");
+        for (String schema : schemas) {
+            schema = schema.trim();
+            System.out.println("[INFO] Connecting to PostgreSQL: " + url + "  schema=" + schema);
+            DbSchema partial = extractor.extractPostgres(url, user, pass, schema);
+            if (merged == null) {
+                merged = partial;
+            } else {
+                merged.tables.addAll(partial.tables);
+            }
+            System.out.println("[INFO] Extracted " + partial.tables.size() + " table(s) from Postgres schema [" + schema + "].");
+        }
 
-        reporter.write(dbSchema, output);
+        merged.schemaName = schemaArg;
+        merged.extractedAt = now();
+        System.out.println("[INFO] Total tables across all schemas: " + merged.tables.size());
+
+        reporter.write(merged, output);
     }
 
     // -------------------------------------------------------------------------
@@ -223,8 +249,8 @@ public class Main {
         System.out.println();
         System.out.println("Usage:");
         System.out.println("  java -jar comparator-fat.jar entities  --source <src-path>  [--output entities.json]");
-        System.out.println("  java -jar comparator-fat.jar oracle    --url <jdbc-url> --user <u> --pass <p> --schema <schema>  [--output oracle.json]");
-        System.out.println("  java -jar comparator-fat.jar postgres  --url <jdbc-url> --user <u> --pass <p> [--schema public]  [--output postgres.json]");
+        System.out.println("  java -jar comparator-fat.jar oracle    --url <jdbc-url> --user <u> --pass <p> --schema <schema[,schema2,...]>  [--output oracle.json]");
+        System.out.println("  java -jar comparator-fat.jar postgres  --url <jdbc-url> --user <u> --pass <p> [--schema public[,schema2,...]]  [--output postgres.json]");
         System.out.println("  java -jar comparator-fat.jar compare   --entities entities.json [--oracle oracle.json] [--postgres postgres.json] [--output report.json]");
         System.out.println();
         System.out.println("JDBC URL examples:");
