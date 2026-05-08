@@ -12,12 +12,6 @@ st.set_page_config(
     layout="wide",
 )
 
-STATUS_COLOR = {
-    "CRITICAL":  "#e53935",
-    "WARNING":   "#f57c00",
-    "NOT_FOUND": "#757575",
-    "OK":        "#2e7d32",
-}
 STATUS_EMOJI = {
     "CRITICAL":  "🔴",
     "WARNING":   "🟡",
@@ -29,11 +23,6 @@ STATUS_EMOJI = {
 
 def severity(s: str) -> int:
     return {"CRITICAL": 3, "WARNING": 2, "NOT_FOUND": 1}.get(s, 0)
-
-def color_cell(val):
-    """Used only for small per-entity tables."""
-    c = STATUS_COLOR.get(val, "")
-    return f"background-color:{c};color:white;font-weight:700" if c else ""
 
 def with_emoji(series: pd.Series) -> pd.Series:
     """Vectorized: prepend status emoji. Fast on any size DataFrame."""
@@ -57,13 +46,14 @@ def is_blob_col(col: dict) -> bool:
 def is_clob_col(col: dict) -> bool:
     return col.get("isLob") and col.get("javaType", "").lower() in ("string", "charsequence")
 
-def render_entity_detail(entity, project_root, status_filter, show_ok_cols):
+def render_entity_detail(entity, project_root, status_filter, show_ok_cols, show_header=True):
     """Render entity detail card — used inline when a table row is selected."""
     estat = entity["entityStatus"]
     short_class = entity["entityClass"].split(".")[-1]
-    st.markdown(
-        f"{STATUS_EMOJI.get(estat, '')} **{short_class}** — `{entity['tableName']}`"
-    )
+    if show_header:
+        st.markdown(
+            f"{STATUS_EMOJI.get(estat, '')} **{short_class}** — `{entity['tableName']}`"
+        )
 
     h1, h2 = st.columns([5, 1])
     with h1:
@@ -110,11 +100,10 @@ def render_entity_detail(entity, project_root, status_filter, show_ok_cols):
                 "Status":     col["overallStatus"],
             })
         cdf = pd.DataFrame(col_rows)
-        st.dataframe(
-            cdf.style.map(color_cell, subset=["Oracle ✓", "Postgres ✓", "Status"]),
-            width="stretch",
-            hide_index=True,
-        )
+        cdf["Oracle ✓"]   = with_emoji(cdf["Oracle ✓"])
+        cdf["Postgres ✓"] = with_emoji(cdf["Postgres ✓"])
+        cdf["Status"]     = with_emoji(cdf["Status"])
+        st.dataframe(cdf, width="stretch", hide_index=True)
 
     issues = [i for col in entity_cols for i in (col.get("issues") or [])]
     if issues:
@@ -474,104 +463,79 @@ with tab_overview:
             st.rerun()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 2 — Per-entity  (styler kept — each table is small)
+# TAB 2 — Per-entity  (paginated — only renders current page of expanders)
 # ──────────────────────────────────────────────────────────────────────────────
 with tab_entities:
-    sorted_entities = sorted(entities, key=lambda e: -severity(e["entityStatus"]))
-
-    for entity in sorted_entities:
-        estat = entity["entityStatus"]
-        short_class = entity["entityClass"].split(".")[-1]
-        label = f"{STATUS_EMOJI.get(estat, '')} **{short_class}**  —  `{entity['tableName']}`"
-
-        entity_cols = [c for c in entity.get("columns", []) if c["overallStatus"] in status_filter]
-        if not show_ok_cols:
-            entity_cols = [c for c in entity_cols if c["overallStatus"] != "OK"]
-        if search:
-            entity_name_match = (
-                search in entity["entityClass"].lower()
-                or search in entity["tableName"].lower()
-            )
-            if not entity_name_match:
-                entity_cols = [
-                    c for c in entity_cols
-                    if search in c["javaFieldName"].lower()
-                    or search in c["javaColumnName"].lower()
-                ]
-            if not entity_cols:
-                continue
+    # ── pre-filter entity list (do NOT render yet) ────────────────────────
+    def _entity_visible(entity):
         if java_type_filter and not any(
             c.get("javaType") in java_type_filter for c in entity.get("columns", [])
         ):
-            continue
+            return False
+        if search:
+            if search in entity["entityClass"].lower() or search in entity["tableName"].lower():
+                return True
+            status_cols = [
+                c for c in entity.get("columns", [])
+                if c["overallStatus"] in status_filter
+                and (show_ok_cols or c["overallStatus"] != "OK")
+            ]
+            return any(
+                search in c["javaFieldName"].lower() or search in c["javaColumnName"].lower()
+                for c in status_cols
+            )
+        return True
 
+    sorted_entities  = sorted(entities, key=lambda e: -severity(e["entityStatus"]))
+    visible_entities = [e for e in sorted_entities if _entity_visible(e)]
+
+    # ── page size + auto-reset ────────────────────────────────────────────
+    ent_page_size = st.selectbox(
+        "Entities per page", options=[10, 25, 50],
+        index=1, label_visibility="collapsed", key="ent_page_size",
+    )
+
+    ent_fp = (
+        tuple(sorted(status_filter)), tuple(sorted(java_type_filter)),
+        filter_blob, filter_clob, search, show_ok_cols, ent_page_size,
+    )
+    if st.session_state.get("_ent_fp") != ent_fp:
+        st.session_state["_ent_fp"] = ent_fp
+        st.session_state["ent_page"] = 0
+
+    ent_total  = len(visible_entities)
+    ent_pages  = max(1, -(-ent_total // ent_page_size))
+    ent_page   = min(st.session_state.get("ent_page", 0), ent_pages - 1)
+    ent_start  = ent_page * ent_page_size
+    ent_end    = ent_start + ent_page_size
+
+    # ── pagination controls (top) ─────────────────────────────────────────
+    ep1, ep2, ep3, ep4, ep5 = st.columns([1, 1, 3, 1, 1])
+    with ep1:
+        if st.button("⏮ First", disabled=(ent_page == 0), use_container_width=True, key="ent_first"):
+            st.session_state["ent_page"] = 0; st.rerun()
+    with ep2:
+        if st.button("◀ Prev", disabled=(ent_page == 0), use_container_width=True, key="ent_prev"):
+            st.session_state["ent_page"] = ent_page - 1; st.rerun()
+    with ep3:
+        st.caption(
+            f"Page **{ent_page + 1}** of **{ent_pages}** "
+            f"— entities {ent_start + 1}–{min(ent_end, ent_total)} of **{ent_total}**"
+        )
+    with ep4:
+        if st.button("Next ▶", disabled=(ent_page >= ent_pages - 1), use_container_width=True, key="ent_next"):
+            st.session_state["ent_page"] = ent_page + 1; st.rerun()
+    with ep5:
+        if st.button("Last ⏭", disabled=(ent_page >= ent_pages - 1), use_container_width=True, key="ent_last"):
+            st.session_state["ent_page"] = ent_pages - 1; st.rerun()
+
+    # ── render only current page ──────────────────────────────────────────
+    for entity in visible_entities[ent_start:ent_end]:
+        estat       = entity["entityStatus"]
+        short_class = entity["entityClass"].split(".")[-1]
+        label       = f"{STATUS_EMOJI.get(estat, '')} **{short_class}**  —  `{entity['tableName']}`"
         with st.expander(label, expanded=False):
-
-            h1, h2 = st.columns([5, 1])
-            with h1:
-                rel = relative_path(entity.get("filePath", ""), project_root)
-                st.markdown(f"📄 `{rel}`", help=entity.get("filePath") or "")
-            with h2:
-                file_path = entity.get("filePath")
-                if file_path:
-                    st.link_button(
-                        "💡 Open in IDEA",
-                        url=idea_url(file_path),
-                        help=f"Opens via idea:// handler → {file_path}",
-                    )
-
-            db1, db2 = st.columns(2)
-            with db1:
-                icon = "✅" if entity["oracleTableFound"] else "❌"
-                st.markdown(f"Oracle table: {icon} {'found' if entity['oracleTableFound'] else '**NOT FOUND**'}")
-            with db2:
-                icon = "✅" if entity["postgresTableFound"] else "❌"
-                st.markdown(f"Postgres table: {icon} {'found' if entity['postgresTableFound'] else '**NOT FOUND**'}")
-
-            if entity_cols:
-                col_rows = []
-                for col in entity_cols:
-                    oc = col.get("oracleColumn")  or {}
-                    pc = col.get("postgresColumn") or {}
-                    flags = []
-                    if col.get("isId"):         flags.append("PK")
-                    if col.get("isLob"):        flags.append("LOB")
-                    if col.get("isJoinColumn"): flags.append("FK")
-                    col_rows.append({
-                        "Field":      col["javaFieldName"],
-                        "Column":     col["javaColumnName"],
-                        "Java Type":  col["javaType"] + (" [" + ",".join(flags) + "]" if flags else ""),
-                        "Oracle":     oc.get("rawDataType", "—"),
-                        "Postgres":   pc.get("rawDataType", "—"),
-                        "Oracle ✓":   col["oracleCompatibility"],
-                        "Postgres ✓": col["postgresCompatibility"],
-                        "Status":     col["overallStatus"],
-                    })
-                cdf = pd.DataFrame(col_rows)
-                st.dataframe(
-                    cdf.style.map(color_cell, subset=["Oracle ✓", "Postgres ✓", "Status"]),
-                    width="stretch",
-                    hide_index=True,
-                )
-
-            issues = [i for col in entity_cols for i in (col.get("issues") or [])]
-            if issues:
-                st.markdown("**Issues:**")
-                for issue in issues:
-                    lvl = "🔴" if any(w in issue for w in ("coerces", "reject", "CRITICAL")) else "🟡"
-                    st.markdown(f"{lvl} {issue}")
-
-            unmapped_o = entity.get("unmappedOracleColumns") or []
-            unmapped_p = entity.get("unmappedPostgresColumns") or []
-            if unmapped_o or unmapped_p:
-                st.markdown("**DB columns with no entity mapping:**")
-                u1, u2 = st.columns(2)
-                with u1:
-                    if unmapped_o:
-                        st.markdown("Oracle: " + ", ".join(f"`{c}`" for c in unmapped_o))
-                with u2:
-                    if unmapped_p:
-                        st.markdown("Postgres: " + ", ".join(f"`{c}`" for c in unmapped_p))
+            render_entity_detail(entity, project_root, status_filter, show_ok_cols, show_header=False)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 3 — Issues only  (emoji mapping + pagination)
