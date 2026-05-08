@@ -1,0 +1,28 @@
+# Maven
+target/
+dependency-reduced-pom.xml
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated report files (outputs of the tool — do not commit)
+entities.json
+oracle.json
+postgres.json
+report.json
