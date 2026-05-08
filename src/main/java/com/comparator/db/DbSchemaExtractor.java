@@ -191,8 +191,8 @@ public class DbSchemaExtractor {
     }
 
     private static void log(String fmt, Object... args) {
-        System.out.printf("[%s] " + fmt + "%n",
-                java.time.LocalTime.now().withNano(0), args);
+        String msg = args.length == 0 ? fmt : String.format(fmt, args);
+        System.out.printf("[%s] %s%n", java.time.LocalTime.now().withNano(0), msg);
         System.out.flush();
     }
 
