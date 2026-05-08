@@ -2,6 +2,7 @@ package com.comparator.parser;
 
 import com.comparator.model.EntityColumn;
 import com.comparator.model.EntityInfo;
+import com.github.javaparser.ParserConfiguration;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
@@ -15,6 +16,11 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
 
 public class EntityParser {
+
+    static {
+        StaticJavaParser.getParserConfiguration()
+                .setLanguageLevel(ParserConfiguration.LanguageLevel.JAVA_21);
+    }
 
     /** Annotations that prevent a field from being a DB column */
     private static final Set<String> SKIP_ANNOTATIONS = new HashSet<>(Arrays.asList(
