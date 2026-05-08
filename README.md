@@ -1,4 +1,4 @@
-# SchemaDrift
+# EntityDBComparator
 
 Detects type mismatches between Spring JPA entities and Oracle / PostgreSQL schemas. Useful during Oracle → Postgres migrations.
 
