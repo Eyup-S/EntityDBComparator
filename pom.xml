@@ -46,6 +46,12 @@
             <artifactId>ojdbc11</artifactId>
             <version>23.4.0.24.05</version>
         </dependency>
+        <!-- Required for non-Western Oracle character sets (e.g. WE8ISO8859P9 Turkish) -->
+        <dependency>
+            <groupId>com.oracle.database.nls</groupId>
+            <artifactId>orai18n</artifactId>
+            <version>23.4.0.24.05</version>
+        </dependency>
     </dependencies>
 
     <build>
