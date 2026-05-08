@@ -57,6 +57,84 @@ def is_blob_col(col: dict) -> bool:
 def is_clob_col(col: dict) -> bool:
     return col.get("isLob") and col.get("javaType", "").lower() in ("string", "charsequence")
 
+def render_entity_detail(entity, project_root, status_filter, show_ok_cols):
+    """Render entity detail card — used inline when a table row is selected."""
+    estat = entity["entityStatus"]
+    short_class = entity["entityClass"].split(".")[-1]
+    st.markdown(
+        f"{STATUS_EMOJI.get(estat, '')} **{short_class}** — `{entity['tableName']}`"
+    )
+
+    h1, h2 = st.columns([5, 1])
+    with h1:
+        rel = relative_path(entity.get("filePath", ""), project_root)
+        st.markdown(f"📄 `{rel}`", help=entity.get("filePath") or "")
+    with h2:
+        file_path = entity.get("filePath")
+        if file_path:
+            st.link_button(
+                "💡 Open in IDEA",
+                url=idea_url(file_path),
+                help=f"Opens via idea:// handler → {file_path}",
+            )
+
+    db1, db2 = st.columns(2)
+    with db1:
+        icon = "✅" if entity["oracleTableFound"] else "❌"
+        st.markdown(f"Oracle table: {icon} {'found' if entity['oracleTableFound'] else '**NOT FOUND**'}")
+    with db2:
+        icon = "✅" if entity["postgresTableFound"] else "❌"
+        st.markdown(f"Postgres table: {icon} {'found' if entity['postgresTableFound'] else '**NOT FOUND**'}")
+
+    entity_cols = [c for c in entity.get("columns", []) if c["overallStatus"] in status_filter]
+    if not show_ok_cols:
+        entity_cols = [c for c in entity_cols if c["overallStatus"] != "OK"]
+
+    if entity_cols:
+        col_rows = []
+        for col in entity_cols:
+            oc = col.get("oracleColumn") or {}
+            pc = col.get("postgresColumn") or {}
+            flags = []
+            if col.get("isId"):         flags.append("PK")
+            if col.get("isLob"):        flags.append("LOB")
+            if col.get("isJoinColumn"): flags.append("FK")
+            col_rows.append({
+                "Field":      col["javaFieldName"],
+                "Column":     col["javaColumnName"],
+                "Java Type":  col["javaType"] + (" [" + ",".join(flags) + "]" if flags else ""),
+                "Oracle":     oc.get("rawDataType", "—"),
+                "Postgres":   pc.get("rawDataType", "—"),
+                "Oracle ✓":   col["oracleCompatibility"],
+                "Postgres ✓": col["postgresCompatibility"],
+                "Status":     col["overallStatus"],
+            })
+        cdf = pd.DataFrame(col_rows)
+        st.dataframe(
+            cdf.style.map(color_cell, subset=["Oracle ✓", "Postgres ✓", "Status"]),
+            width="stretch",
+            hide_index=True,
+        )
+
+    issues = [i for col in entity_cols for i in (col.get("issues") or [])]
+    if issues:
+        st.markdown("**Issues:**")
+        for issue in issues:
+            lvl = "🔴" if any(w in issue for w in ("coerces", "reject", "CRITICAL")) else "🟡"
+            st.markdown(f"{lvl} {issue}")
+
+    unmapped_o = entity.get("unmappedOracleColumns") or []
+    unmapped_p = entity.get("unmappedPostgresColumns") or []
+    if unmapped_o or unmapped_p:
+        st.markdown("**DB columns with no entity mapping:**")
+        u1, u2 = st.columns(2)
+        with u1:
+            if unmapped_o:
+                st.markdown("Oracle: " + ", ".join(f"`{c}`" for c in unmapped_o))
+        with u2:
+            if unmapped_p:
+                st.markdown("Postgres: " + ", ".join(f"`{c}`" for c in unmapped_p))
+
 # ── cached processing (runs once per unique report file) ───────────────────────
 
 @st.cache_data(show_spinner="Processing report…")
@@ -354,7 +432,19 @@ with tab_overview:
         disp["Oracle ✓"]   = with_emoji(disp["Oracle ✓"])
         disp["Postgres ✓"] = with_emoji(disp["Postgres ✓"])
         disp["Status"]     = with_emoji(disp["Status"])
-        st.dataframe(disp, width="stretch", height=520, hide_index=True)
+        ov_evt = st.dataframe(
+            disp, width="stretch", height=520, hide_index=True,
+            on_select="rerun", selection_mode="single-row", key="ov_table",
+        )
+        if ov_evt.selection.rows:
+            sel_entity = disp.iloc[ov_evt.selection.rows[0]]["Entity"]
+            found = next(
+                (e for e in entities_raw if e["entityClass"].split(".")[-1] == sel_entity),
+                None,
+            )
+            if found:
+                with st.container(border=True):
+                    render_entity_detail(found, project_root, status_filter, show_ok_cols)
     else:
         st.info("No columns match the current filters.")
 
@@ -415,7 +505,7 @@ with tab_entities:
         ):
             continue
 
-        with st.expander(label, expanded=(estat in ("CRITICAL", "WARNING"))):
+        with st.expander(label, expanded=False):
 
             h1, h2 = st.columns([5, 1])
             with h1:
@@ -484,7 +574,7 @@ with tab_entities:
                         st.markdown("Postgres: " + ", ".join(f"`{c}`" for c in unmapped_p))
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 3 — Issues only  (emoji mapping — can be large)
+# TAB 3 — Issues only  (emoji mapping + pagination)
 # ──────────────────────────────────────────────────────────────────────────────
 with tab_issues:
     issue_rows = []
@@ -500,18 +590,81 @@ with tab_issues:
                     "Issue":     issue,
                 })
 
-    if issue_rows:
-        idf = pd.DataFrame(issue_rows)
-        idf = idf[idf["Status"].isin(status_filter)]
-        if search:
-            idf = idf[
-                idf["Entity"].str.lower().str.contains(search, na=False)
-                | idf["Field"].str.lower().str.contains(search, na=False)
-                | idf["Issue"].str.lower().str.contains(search, na=False)
-            ]
-        idf = idf.sort_values("Status", key=lambda s: s.map(severity), ascending=False)
-        idf["Status"] = with_emoji(idf["Status"])
-        st.dataframe(idf, width="stretch", height=520, hide_index=True)
-        st.caption(f"{len(idf)} issue(s)")
-    else:
+    if not issue_rows:
         st.success("No issues match the current filters.")
+    else:
+        idf_all = pd.DataFrame(issue_rows)
+        idf_all = idf_all[idf_all["Status"].isin(status_filter)]
+        if search:
+            idf_all = idf_all[
+                idf_all["Entity"].str.lower().str.contains(search, na=False)
+                | idf_all["Field"].str.lower().str.contains(search, na=False)
+                | idf_all["Issue"].str.lower().str.contains(search, na=False)
+            ]
+        idf_all = idf_all.sort_values("Status", key=lambda s: s.map(severity), ascending=False)
+
+        # ── page size selector ────────────────────────────────────────────────
+        is_page_size = st.selectbox(
+            "Rows per page", options=[50, 100, 200, 500],
+            index=1, label_visibility="collapsed", key="is_page_size",
+        )
+
+        # ── auto-reset page when filters change ───────────────────────────────
+        is_fp = (
+            tuple(sorted(status_filter)),
+            tuple(sorted(java_type_filter)),
+            filter_blob, filter_clob,
+            search, show_ok_cols,
+            is_page_size,
+        )
+        if st.session_state.get("_is_fp") != is_fp:
+            st.session_state["_is_fp"] = is_fp
+            st.session_state["is_page"] = 0
+
+        # ── pagination ────────────────────────────────────────────────────────
+        is_total = len(idf_all)
+        is_pages = max(1, -(-is_total // is_page_size))
+        is_page  = min(st.session_state.get("is_page", 0), is_pages - 1)
+        is_start = is_page * is_page_size
+        is_end   = is_start + is_page_size
+        idf_page = idf_all.iloc[is_start:is_end].copy()
+        idf_page["Status"] = with_emoji(idf_page["Status"])
+
+        # ── render table ──────────────────────────────────────────────────────
+        is_evt = st.dataframe(
+            idf_page, width="stretch", height=520, hide_index=True,
+            on_select="rerun", selection_mode="single-row", key="is_table",
+        )
+        if is_evt.selection.rows:
+            sel_entity = idf_page.iloc[is_evt.selection.rows[0]]["Entity"]
+            found = next(
+                (e for e in entities_raw if e["entityClass"].split(".")[-1] == sel_entity),
+                None,
+            )
+            if found:
+                with st.container(border=True):
+                    render_entity_detail(found, project_root, status_filter, show_ok_cols)
+
+        # ── pagination controls ───────────────────────────────────────────────
+        ic1, ic2, ic3, ic4, ic5 = st.columns([1, 1, 3, 1, 1])
+        with ic1:
+            if st.button("⏮ First", disabled=(is_page == 0), use_container_width=True, key="is_first"):
+                st.session_state["is_page"] = 0
+                st.rerun()
+        with ic2:
+            if st.button("◀ Prev", disabled=(is_page == 0), use_container_width=True, key="is_prev"):
+                st.session_state["is_page"] = is_page - 1
+                st.rerun()
+        with ic3:
+            st.caption(
+                f"Page **{is_page + 1}** of **{is_pages}** "
+                f"— rows {is_start + 1}–{min(is_end, is_total)} of **{is_total}** issue(s)"
+            )
+        with ic4:
+            if st.button("Next ▶", disabled=(is_page >= is_pages - 1), use_container_width=True, key="is_next"):
+                st.session_state["is_page"] = is_page + 1
+                st.rerun()
+        with ic5:
+            if st.button("Last ⏭", disabled=(is_page >= is_pages - 1), use_container_width=True, key="is_last"):
+                st.session_state["is_page"] = is_pages - 1
+                st.rerun()
