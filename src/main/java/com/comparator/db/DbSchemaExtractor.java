@@ -58,14 +58,24 @@ public class DbSchemaExtractor {
         result.schemaName = schema.toUpperCase(Locale.ROOT);
         result.tables = new ArrayList<>();
 
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password);
-             PreparedStatement ps = conn.prepareStatement(ORACLE_QUERY)) {
-
-            ps.setString(1, schema);
-            try (ResultSet rs = ps.executeQuery()) {
-                result.tables = mapOracleRows(rs, schema.toUpperCase(Locale.ROOT));
+        log("Connecting to Oracle...");
+        long t0 = System.currentTimeMillis();
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password)) {
+            log("Connected in %d ms. Running schema query for owner [%s]...", elapsed(t0), schema.toUpperCase(Locale.ROOT));
+            long t1 = System.currentTimeMillis();
+            try (PreparedStatement ps = conn.prepareStatement(ORACLE_QUERY)) {
+                ps.setString(1, schema);
+                log("Query sent, waiting for results...");
+                try (ResultSet rs = ps.executeQuery()) {
+                    log("First rows received in %d ms. Reading columns...", elapsed(t1));
+                    result.tables = mapOracleRows(rs, schema.toUpperCase(Locale.ROOT));
+                }
             }
         }
+        log("Done. %d tables, %d columns total in %d ms.",
+                result.tables.size(),
+                result.tables.stream().mapToInt(t -> t.columns.size()).sum(),
+                elapsed(t0));
         return result;
     }
 
@@ -75,14 +85,24 @@ public class DbSchemaExtractor {
         result.schemaName = schema;
         result.tables = new ArrayList<>();
 
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password);
-             PreparedStatement ps = conn.prepareStatement(POSTGRES_QUERY)) {
-
-            ps.setString(1, schema);
-            try (ResultSet rs = ps.executeQuery()) {
-                result.tables = mapPostgresRows(rs, schema);
+        log("Connecting to Postgres...");
+        long t0 = System.currentTimeMillis();
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, user, password)) {
+            log("Connected in %d ms. Running schema query for schema [%s]...", elapsed(t0), schema);
+            long t1 = System.currentTimeMillis();
+            try (PreparedStatement ps = conn.prepareStatement(POSTGRES_QUERY)) {
+                ps.setString(1, schema);
+                log("Query sent, waiting for results...");
+                try (ResultSet rs = ps.executeQuery()) {
+                    log("First rows received in %d ms. Reading columns...", elapsed(t1));
+                    result.tables = mapPostgresRows(rs, schema);
+                }
             }
         }
+        log("Done. %d tables, %d columns total in %d ms.",
+                result.tables.size(),
+                result.tables.stream().mapToInt(t -> t.columns.size()).sum(),
+                elapsed(t0));
         return result;
     }
 
@@ -92,9 +112,12 @@ public class DbSchemaExtractor {
 
     private List<DbTable> mapOracleRows(ResultSet rs, String schema) throws SQLException {
         Map<String, DbTable> tableMap = new LinkedHashMap<>();
+        int rowCount = 0;
 
         while (rs.next()) {
+            rowCount++;
             String tableName = rs.getString("table_name").toUpperCase(Locale.ROOT);
+            boolean isNew = !tableMap.containsKey(tableName);
             DbTable table = tableMap.computeIfAbsent(tableName, k -> {
                 DbTable t = new DbTable();
                 t.tableName = k;
@@ -102,6 +125,9 @@ public class DbSchemaExtractor {
                 t.columns = new ArrayList<>();
                 return t;
             });
+            if (isNew) {
+                log("  Reading table %-40s (table #%d)", tableName, tableMap.size());
+            }
 
             DbColumn col = new DbColumn();
             col.columnName = rs.getString("column_name").toUpperCase(Locale.ROOT);
@@ -121,9 +147,12 @@ public class DbSchemaExtractor {
 
     private List<DbTable> mapPostgresRows(ResultSet rs, String schema) throws SQLException {
         Map<String, DbTable> tableMap = new LinkedHashMap<>();
+        int rowCount = 0;
 
         while (rs.next()) {
+            rowCount++;
             String tableName = rs.getString("table_name");
+            boolean isNew = !tableMap.containsKey(tableName);
             DbTable table = tableMap.computeIfAbsent(tableName, k -> {
                 DbTable t = new DbTable();
                 t.tableName = k;
@@ -131,6 +160,9 @@ public class DbSchemaExtractor {
                 t.columns = new ArrayList<>();
                 return t;
             });
+            if (isNew) {
+                log("  Reading table %-40s (table #%d)", tableName, tableMap.size());
+            }
 
             DbColumn col = new DbColumn();
             col.columnName = rs.getString("column_name");
@@ -156,6 +188,16 @@ public class DbSchemaExtractor {
     private Integer getIntOrNull(ResultSet rs, String col) throws SQLException {
         int val = rs.getInt(col);
         return rs.wasNull() ? null : val;
+    }
+
+    private static void log(String fmt, Object... args) {
+        System.out.printf("[%s] " + fmt + "%n",
+                java.time.LocalTime.now().withNano(0), args);
+        System.out.flush();
+    }
+
+    private static long elapsed(long startMs) {
+        return System.currentTimeMillis() - startMs;
     }
 
     private String buildOracleRawType(DbColumn col) {
