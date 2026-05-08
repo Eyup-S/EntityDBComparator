@@ -291,27 +291,97 @@ tab_overview, tab_entities, tab_issues = st.tabs(
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 1 — Overview  (emoji mapping instead of styler — fast on any row count)
+# TAB 1 — Overview  (emoji mapping + pagination)
 # ──────────────────────────────────────────────────────────────────────────────
 with tab_overview:
-    if not df_filtered.empty:
+    # ── tab-local search + page size ──────────────────────────────────────────
+    ov_col1, ov_col2 = st.columns([5, 1])
+    with ov_col1:
+        ov_search = st.text_input(
+            "Search",
+            placeholder="Entity name, table, field, column…",
+            label_visibility="collapsed",
+            key="ov_search",
+        ).strip().lower()
+    with ov_col2:
+        page_size = st.selectbox(
+            "Rows", options=[50, 100, 200, 500],
+            index=1, label_visibility="collapsed", key="ov_page_size",
+        )
+
+    # ── apply tab-local search on top of sidebar filters ──────────────────────
+    df_ov = df_filtered.copy()
+    if ov_search:
+        mask = (
+            df_ov["Entity"].str.lower().str.contains(ov_search, na=False)
+            | df_ov["Table"].str.lower().str.contains(ov_search, na=False)
+            | df_ov["Java Field"].str.lower().str.contains(ov_search, na=False)
+            | df_ov["Java Column"].str.lower().str.contains(ov_search, na=False)
+            | df_ov["Java Type"].str.lower().str.contains(ov_search, na=False)
+        )
+        df_ov = df_ov[mask]
+
+    # ── auto-reset page when filters or search change ─────────────────────────
+    filter_fingerprint = (
+        tuple(sorted(status_filter)),
+        tuple(sorted(java_type_filter)),
+        filter_blob, filter_clob,
+        search, show_ok_cols,
+        ov_search, page_size,
+    )
+    if st.session_state.get("_ov_fp") != filter_fingerprint:
+        st.session_state["_ov_fp"] = filter_fingerprint
+        st.session_state["ov_page"] = 0
+
+    # ── pagination ────────────────────────────────────────────────────────────
+    total_rows  = len(df_ov)
+    total_pages = max(1, -(-total_rows // page_size))   # ceiling division
+    page        = min(st.session_state.get("ov_page", 0), total_pages - 1)
+
+    start = page * page_size
+    end   = start + page_size
+    df_page = df_ov.iloc[start:end]
+
+    # ── render table ──────────────────────────────────────────────────────────
+    if not df_page.empty:
         display_cols = [
             "Entity", "Table",
             "Java Field", "Java Column", "Java Type",
             "Oracle Type", "Postgres Type",
             "Oracle ✓", "Postgres ✓", "Status",
         ]
-        disp = df_filtered[display_cols].copy()
-        disp["Oracle ✓"]  = with_emoji(disp["Oracle ✓"])
+        disp = df_page[display_cols].copy()
+        disp["Oracle ✓"]   = with_emoji(disp["Oracle ✓"])
         disp["Postgres ✓"] = with_emoji(disp["Postgres ✓"])
-        disp["Status"]    = with_emoji(disp["Status"])
+        disp["Status"]     = with_emoji(disp["Status"])
         st.dataframe(disp, width="stretch", height=520, hide_index=True)
-        st.caption(
-            f"Showing {len(df_filtered)} column(s) across "
-            f"{df_filtered['Entity'].nunique()} entity/entities"
-        )
     else:
         st.info("No columns match the current filters.")
+
+    # ── pagination controls ───────────────────────────────────────────────────
+    pc1, pc2, pc3, pc4, pc5 = st.columns([1, 1, 3, 1, 1])
+    with pc1:
+        if st.button("⏮ First", disabled=(page == 0), use_container_width=True):
+            st.session_state["ov_page"] = 0
+            st.rerun()
+    with pc2:
+        if st.button("◀ Prev", disabled=(page == 0), use_container_width=True):
+            st.session_state["ov_page"] = page - 1
+            st.rerun()
+    with pc3:
+        st.caption(
+            f"Page **{page + 1}** of **{total_pages}** "
+            f"— rows {start + 1}–{min(end, total_rows)} of **{total_rows}**"
+            + (f" (filtered from {len(df_all)} total)" if total_rows != len(df_all) else "")
+        )
+    with pc4:
+        if st.button("Next ▶", disabled=(page >= total_pages - 1), use_container_width=True):
+            st.session_state["ov_page"] = page + 1
+            st.rerun()
+    with pc5:
+        if st.button("Last ⏭", disabled=(page >= total_pages - 1), use_container_width=True):
+            st.session_state["ov_page"] = total_pages - 1
+            st.rerun()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 2 — Per-entity  (styler kept — each table is small)
