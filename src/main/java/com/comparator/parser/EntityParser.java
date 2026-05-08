@@ -108,7 +108,12 @@ public class EntityParser {
 
         if (tableAnn.isPresent()) {
             String name = getStringAttribute(tableAnn.get(), "name");
-            if (name != null && !name.isEmpty()) return name;
+            if (name != null && !name.isEmpty()) {
+                // Strip schema prefix: "MySchema.MyTable" → "MyTable"
+                int dot = name.lastIndexOf('.');
+                if (dot >= 0) name = name.substring(dot + 1);
+                return name;
+            }
         }
 
         // JPA default: class name as-is (Hibernate naming strategy may add underscores,
