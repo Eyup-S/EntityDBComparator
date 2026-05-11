@@ -267,19 +267,6 @@ xdg-open "idea://open?file=$HOME/.bashrc&line=1"
     # ── filters ────────────────────────────────────────────────────────────────
     st.subheader("🔍 Filters")
 
-    status_filter = st.multiselect(
-        "Status",
-        options=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
-        default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
-    )
-    java_type_filter = st.multiselect(
-        "Java field types",
-        options=all_java_types,
-        default=[],
-        placeholder="All types",
-        help="Keep only entities that have at least one field of the selected type(s).",
-    )
-
     st.markdown("**LOB field filter**")
     filter_blob = st.checkbox("Show only entities with BLOB fields")
     filter_clob = st.checkbox("Show only entities with CLOB fields")
@@ -287,12 +274,9 @@ xdg-open "idea://open?file=$HOME/.bashrc&line=1"
     search = st.text_input("Search entity / field / column", "").strip().lower()
     show_ok_cols = st.checkbox("Show OK columns", value=True)
 
-# ── filter entity list ─────────────────────────────────────────────────────────
+# ── filter entity list (LOB only — status/java_type are per-tab) ──────────────
 entities = entities_raw
 
-if java_type_filter:
-    entities = [e for e in entities
-                if any(c.get("javaType") in java_type_filter for c in e.get("columns", []))]
 if filter_blob:
     entities = [e for e in entities if any(is_blob_col(c) for c in e.get("columns", []))]
 if filter_clob:
@@ -300,12 +284,11 @@ if filter_clob:
 
 entity_names = {e["entityClass"].split(".")[-1] for e in entities}
 
-# ── filter flat DataFrame ─────────────────────────────────────────────────────
-def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
+# ── base DataFrame filter (LOB entity scope + search + show_ok_cols) ──────────
+def apply_base_filters(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     df = df[df["Entity"].isin(entity_names)]
-    df = df[df["Status"].isin(status_filter)]
     if not show_ok_cols:
         df = df[df["Status"] != "OK"]
     if search:
@@ -318,7 +301,7 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
         df = df[mask]
     return df
 
-df_filtered = apply_filters(df_all)
+df_base = apply_base_filters(df_all)
 
 # ── summary metrics ────────────────────────────────────────────────────────────
 s = report["summary"]
@@ -361,7 +344,34 @@ tab_overview, tab_entities, tab_issues = st.tabs(
 # TAB 1 — Overview  (emoji mapping + pagination)
 # ──────────────────────────────────────────────────────────────────────────────
 with tab_overview:
-    # ── tab-local search + page size ──────────────────────────────────────────
+    # ── filter row ────────────────────────────────────────────────────────────
+    of1, of2, of3, of4 = st.columns(4)
+    with of1:
+        ov_status = st.multiselect(
+            "Overall Status", ["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            key="ov_status",
+        )
+    with of2:
+        ov_oracle = st.multiselect(
+            "Oracle ✓", ["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            key="ov_oracle",
+        )
+    with of3:
+        ov_pg = st.multiselect(
+            "Postgres ✓", ["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            key="ov_pg",
+        )
+    with of4:
+        ov_java_type = st.multiselect(
+            "Java Type", all_java_types,
+            default=[], placeholder="All types",
+            key="ov_java_type",
+        )
+
+    # ── search + page size ────────────────────────────────────────────────────
     ov_col1, ov_col2 = st.columns([5, 1])
     with ov_col1:
         ov_search = st.text_input(
@@ -376,8 +386,13 @@ with tab_overview:
             index=1, label_visibility="collapsed", key="ov_page_size",
         )
 
-    # ── apply tab-local search on top of sidebar filters ──────────────────────
-    df_ov = df_filtered.copy()
+    # ── apply filters ─────────────────────────────────────────────────────────
+    df_ov = df_base.copy()
+    df_ov = df_ov[df_ov["Status"].isin(ov_status)]
+    df_ov = df_ov[df_ov["Oracle ✓"].isin(ov_oracle)]
+    df_ov = df_ov[df_ov["Postgres ✓"].isin(ov_pg)]
+    if ov_java_type:
+        df_ov = df_ov[df_ov["Java Type"].str.split(" [").str[0].isin(ov_java_type)]
     if ov_search:
         mask = (
             df_ov["Entity"].str.lower().str.contains(ov_search, na=False)
@@ -388,12 +403,11 @@ with tab_overview:
         )
         df_ov = df_ov[mask]
 
-    # ── auto-reset page when filters or search change ─────────────────────────
+    # ── auto-reset page when filters change ───────────────────────────────────
     filter_fingerprint = (
-        tuple(sorted(status_filter)),
-        tuple(sorted(java_type_filter)),
-        filter_blob, filter_clob,
-        search, show_ok_cols,
+        tuple(sorted(ov_status)), tuple(sorted(ov_oracle)), tuple(sorted(ov_pg)),
+        tuple(sorted(ov_java_type)),
+        filter_blob, filter_clob, search, show_ok_cols,
         ov_search, page_size,
     )
     if st.session_state.get("_ov_fp") != filter_fingerprint:
@@ -402,7 +416,7 @@ with tab_overview:
 
     # ── pagination ────────────────────────────────────────────────────────────
     total_rows  = len(df_ov)
-    total_pages = max(1, -(-total_rows // page_size))   # ceiling division
+    total_pages = max(1, -(-total_rows // page_size))
     page        = min(st.session_state.get("ov_page", 0), total_pages - 1)
 
     start = page * page_size
@@ -433,7 +447,7 @@ with tab_overview:
             )
             if found:
                 with st.container(border=True):
-                    render_entity_detail(found, project_root, status_filter, show_ok_cols)
+                    render_entity_detail(found, project_root, ov_status, show_ok_cols)
     else:
         st.info("No columns match the current filters.")
 
@@ -466,10 +480,32 @@ with tab_overview:
 # TAB 2 — Per-entity  (paginated — only renders current page of expanders)
 # ──────────────────────────────────────────────────────────────────────────────
 with tab_entities:
-    # ── pre-filter entity list (do NOT render yet) ────────────────────────
+    # ── filter row ────────────────────────────────────────────────────────────
+    ef1, ef2, ef3 = st.columns([2, 3, 1])
+    with ef1:
+        ent_status = st.multiselect(
+            "Status", ["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+            key="ent_status",
+        )
+    with ef2:
+        ent_java_type = st.multiselect(
+            "Java Type", all_java_types,
+            default=[], placeholder="All types",
+            key="ent_java_type",
+        )
+    with ef3:
+        ent_page_size = st.selectbox(
+            "Per page", options=[10, 25, 50],
+            index=1, key="ent_page_size",
+        )
+
+    # ── pre-filter entity list ─────────────────────────────────────────────
     def _entity_visible(entity):
-        if java_type_filter and not any(
-            c.get("javaType") in java_type_filter for c in entity.get("columns", [])
+        if not any(c["overallStatus"] in ent_status for c in entity.get("columns", [])):
+            return False
+        if ent_java_type and not any(
+            c.get("javaType") in ent_java_type for c in entity.get("columns", [])
         ):
             return False
         if search:
@@ -477,7 +513,7 @@ with tab_entities:
                 return True
             status_cols = [
                 c for c in entity.get("columns", [])
-                if c["overallStatus"] in status_filter
+                if c["overallStatus"] in ent_status
                 and (show_ok_cols or c["overallStatus"] != "OK")
             ]
             return any(
@@ -489,14 +525,9 @@ with tab_entities:
     sorted_entities  = sorted(entities, key=lambda e: -severity(e["entityStatus"]))
     visible_entities = [e for e in sorted_entities if _entity_visible(e)]
 
-    # ── page size + auto-reset ────────────────────────────────────────────
-    ent_page_size = st.selectbox(
-        "Entities per page", options=[10, 25, 50],
-        index=1, label_visibility="collapsed", key="ent_page_size",
-    )
-
+    # ── auto-reset page ───────────────────────────────────────────────────────
     ent_fp = (
-        tuple(sorted(status_filter)), tuple(sorted(java_type_filter)),
+        tuple(sorted(ent_status)), tuple(sorted(ent_java_type)),
         filter_blob, filter_clob, search, show_ok_cols, ent_page_size,
     )
     if st.session_state.get("_ent_fp") != ent_fp:
@@ -509,7 +540,7 @@ with tab_entities:
     ent_start  = ent_page * ent_page_size
     ent_end    = ent_start + ent_page_size
 
-    # ── pagination controls (top) ─────────────────────────────────────────
+    # ── pagination controls (top) ─────────────────────────────────────────────
     ep1, ep2, ep3, ep4, ep5 = st.columns([1, 1, 3, 1, 1])
     with ep1:
         if st.button("⏮ First", disabled=(ent_page == 0), use_container_width=True, key="ent_first"):
@@ -529,13 +560,13 @@ with tab_entities:
         if st.button("Last ⏭", disabled=(ent_page >= ent_pages - 1), use_container_width=True, key="ent_last"):
             st.session_state["ent_page"] = ent_pages - 1; st.rerun()
 
-    # ── render only current page ──────────────────────────────────────────
+    # ── render only current page ──────────────────────────────────────────────
     for entity in visible_entities[ent_start:ent_end]:
         estat       = entity["entityStatus"]
         short_class = entity["entityClass"].split(".")[-1]
         label       = f"{STATUS_EMOJI.get(estat, '')} **{short_class}**  —  `{entity['tableName']}`"
         with st.expander(label, expanded=False):
-            render_entity_detail(entity, project_root, status_filter, show_ok_cols, show_header=False)
+            render_entity_detail(entity, project_root, ent_status, show_ok_cols, show_header=False)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 3 — Issues only  (emoji mapping + pagination)
@@ -558,7 +589,22 @@ with tab_issues:
         st.success("No issues match the current filters.")
     else:
         idf_all = pd.DataFrame(issue_rows)
-        idf_all = idf_all[idf_all["Status"].isin(status_filter)]
+
+        # ── filter row ────────────────────────────────────────────────────────
+        isf1, isf2 = st.columns([4, 1])
+        with isf1:
+            is_status = st.multiselect(
+                "Status", ["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+                default=["CRITICAL", "WARNING", "NOT_FOUND", "OK"],
+                key="is_status_filter",
+            )
+        with isf2:
+            is_page_size = st.selectbox(
+                "Per page", options=[50, 100, 200, 500],
+                index=1, key="is_page_size",
+            )
+
+        idf_all = idf_all[idf_all["Status"].isin(is_status)]
         if search:
             idf_all = idf_all[
                 idf_all["Entity"].str.lower().str.contains(search, na=False)
@@ -567,16 +613,9 @@ with tab_issues:
             ]
         idf_all = idf_all.sort_values("Status", key=lambda s: s.map(severity), ascending=False)
 
-        # ── page size selector ────────────────────────────────────────────────
-        is_page_size = st.selectbox(
-            "Rows per page", options=[50, 100, 200, 500],
-            index=1, label_visibility="collapsed", key="is_page_size",
-        )
-
         # ── auto-reset page when filters change ───────────────────────────────
         is_fp = (
-            tuple(sorted(status_filter)),
-            tuple(sorted(java_type_filter)),
+            tuple(sorted(is_status)),
             filter_blob, filter_clob,
             search, show_ok_cols,
             is_page_size,
@@ -607,7 +646,7 @@ with tab_issues:
             )
             if found:
                 with st.container(border=True):
-                    render_entity_detail(found, project_root, status_filter, show_ok_cols)
+                    render_entity_detail(found, project_root, is_status, show_ok_cols)
 
         # ── pagination controls ───────────────────────────────────────────────
         ic1, ic2, ic3, ic4, ic5 = st.columns([1, 1, 3, 1, 1])
