@@ -41,12 +41,26 @@ public class EntityParser {
             throw new IllegalArgumentException("Source path does not exist: " + sourcePath);
         }
 
+        log("Scanning source tree: %s", root.toAbsolutePath());
+        long t0 = System.currentTimeMillis();
+        int[] fileCount = {0};
+
         Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
                 if (file.toString().endsWith(".java")) {
+                    fileCount[0]++;
+                    if (fileCount[0] % 100 == 0) {
+                        log("  ... %d files scanned, %d entities found so far", fileCount[0], results.size());
+                    }
                     try {
                         List<EntityInfo> parsed = parseFile(file);
+                        for (EntityInfo e : parsed) {
+                            String tableDisplay = (e.schemaName != null && !e.schemaName.isEmpty())
+                                    ? e.schemaName + "." + e.tableName : e.tableName;
+                            log("  Found entity %-50s → table=%s  columns=%d",
+                                    e.className, tableDisplay, e.columns.size());
+                        }
                         results.addAll(parsed);
                     } catch (Exception e) {
                         System.err.println("[WARN] Failed to parse " + file + ": " + e.getMessage());
@@ -56,7 +70,15 @@ public class EntityParser {
             }
         });
 
+        log("Done. Scanned %d Java files, found %d entities in %d ms.",
+                fileCount[0], results.size(), System.currentTimeMillis() - t0);
         return results;
+    }
+
+    private static void log(String fmt, Object... args) {
+        String msg = args.length == 0 ? fmt : String.format(fmt, args);
+        System.out.printf("[%s] %s%n", java.time.LocalTime.now().withNano(0), msg);
+        System.out.flush();
     }
 
     private List<EntityInfo> parseFile(Path file) throws IOException {
