@@ -77,6 +77,7 @@ public class EntityParser {
                     : packageName + "." + entity.className;
             entity.filePath = file.toString();
             entity.tableName = resolveTableName(clazz);
+            entity.schemaName = resolveSchemaName(clazz);
             entity.columns = new ArrayList<>();
 
             clazz.getFields().forEach(field -> {
@@ -119,6 +120,26 @@ public class EntityParser {
         // JPA default: class name as-is (Hibernate naming strategy may add underscores,
         // but we use the raw class name so the user can spot it)
         return clazz.getNameAsString().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private String resolveSchemaName(ClassOrInterfaceDeclaration clazz) {
+        Optional<AnnotationExpr> tableAnn = clazz.getAnnotationByName("Table");
+        if (!tableAnn.isPresent()) tableAnn = clazz.getAnnotationByName("javax.persistence.Table");
+        if (!tableAnn.isPresent()) tableAnn = clazz.getAnnotationByName("jakarta.persistence.Table");
+
+        if (tableAnn.isPresent()) {
+            // Explicit schema attribute: @Table(schema = "MySchema")
+            String schema = getStringAttribute(tableAnn.get(), "schema");
+            if (schema != null && !schema.isEmpty()) return schema;
+
+            // Schema embedded in name: @Table(name = "MySchema.MyTable")
+            String name = getStringAttribute(tableAnn.get(), "name");
+            if (name != null) {
+                int dot = name.lastIndexOf('.');
+                if (dot >= 0) return name.substring(0, dot);
+            }
+        }
+        return null;
     }
 
     private boolean shouldSkipField(FieldDeclaration field) {

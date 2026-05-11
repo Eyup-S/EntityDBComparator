@@ -62,9 +62,9 @@ public class SchemaComparator {
         ce.filePath = entity.filePath;
         ce.columns = new ArrayList<>();
 
-        // Look up table in both DBs (case-insensitive)
-        DbTable oracleTable = findTable(entity.tableName, oracleTables);
-        DbTable postgresTable = findTable(entity.tableName, postgresTables);
+        // Look up table in both DBs — prefer schema-qualified match when entity has schema
+        DbTable oracleTable = findTable(entity.tableName, entity.schemaName, oracleTables);
+        DbTable postgresTable = findTable(entity.tableName, entity.schemaName, postgresTables);
 
         ce.oracleTableFound = oracleTable != null;
         ce.postgresTableFound = postgresTable != null;
@@ -157,7 +157,13 @@ public class SchemaComparator {
         Map<String, DbTable> map = new HashMap<>();
         if (schema == null || schema.tables == null) return map;
         for (DbTable t : schema.tables) {
-            map.put(t.tableName.toUpperCase(java.util.Locale.ROOT), t);
+            String tableKey = t.tableName.toUpperCase(java.util.Locale.ROOT);
+            // Plain name (fallback for entities without schema info; last writer wins on clash)
+            map.put(tableKey, t);
+            // Qualified name for precise lookup when entity carries schema
+            if (t.schemaName != null && !t.schemaName.isEmpty()) {
+                map.put(t.schemaName.toUpperCase(java.util.Locale.ROOT) + "." + tableKey, t);
+            }
         }
         return map;
     }
@@ -171,13 +177,18 @@ public class SchemaComparator {
         return map;
     }
 
-    private DbTable findTable(String name, Map<String, DbTable> map) {
-        if (name == null) return null;
-        // Try exact uppercase match first
-        DbTable t = map.get(name.toUpperCase(java.util.Locale.ROOT));
+    private DbTable findTable(String tableName, String schemaName, Map<String, DbTable> map) {
+        if (tableName == null) return null;
+        String tableUpper = tableName.toUpperCase(java.util.Locale.ROOT);
+        // Qualified lookup when entity declares a schema
+        if (schemaName != null && !schemaName.isEmpty()) {
+            DbTable t = map.get(schemaName.toUpperCase(java.util.Locale.ROOT) + "." + tableUpper);
+            if (t != null) return t;
+        }
+        // Plain name fallback
+        DbTable t = map.get(tableUpper);
         if (t != null) return t;
-        // Try lowercase (Postgres default)
-        return map.get(name.toLowerCase());
+        return map.get(tableName.toLowerCase());
     }
 
     /** Returns the more severe of two statuses: CRITICAL > WARNING > NOT_FOUND > OK */
