@@ -68,6 +68,8 @@ public class SchemaComparator {
 
         ce.oracleTableFound = oracleTable != null;
         ce.postgresTableFound = postgresTable != null;
+        ce.oracleSchemaName = oracleTable != null ? oracleTable.schemaName : null;
+        ce.postgresSchemaName = postgresTable != null ? postgresTable.schemaName : null;
 
         // Build fast column lookup (uppercase)
         Map<String, DbColumn> oracleCols = buildColumnMap(oracleTable);

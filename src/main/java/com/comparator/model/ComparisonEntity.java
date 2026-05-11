@@ -9,6 +9,10 @@ public class ComparisonEntity {
     public String filePath;
     public boolean oracleTableFound;
     public boolean postgresTableFound;
+    /** Schema that owned the matched Oracle table, null if not found */
+    public String oracleSchemaName;
+    /** Schema that owned the matched Postgres table, null if not found */
+    public String postgresSchemaName;
     public List<ComparisonColumn> columns;
     /** Column names present in Oracle but not mapped in any entity field */
     public List<String> unmappedOracleColumns;

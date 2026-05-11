@@ -68,13 +68,17 @@ def render_entity_detail(entity, project_root, status_filter, show_ok_cols, show
                 help=f"Opens via idea:// handler → {file_path}",
             )
 
+    ora_schema = entity.get("oracleSchemaName") or ""
+    pg_schema  = entity.get("postgresSchemaName") or ""
     db1, db2 = st.columns(2)
     with db1:
         icon = "✅" if entity["oracleTableFound"] else "❌"
-        st.markdown(f"Oracle table: {icon} {'found' if entity['oracleTableFound'] else '**NOT FOUND**'}")
+        schema_hint = f"  `{ora_schema}.{entity['tableName']}`" if ora_schema else ""
+        st.markdown(f"Oracle table: {icon} {'found' if entity['oracleTableFound'] else '**NOT FOUND**'}{schema_hint}")
     with db2:
         icon = "✅" if entity["postgresTableFound"] else "❌"
-        st.markdown(f"Postgres table: {icon} {'found' if entity['postgresTableFound'] else '**NOT FOUND**'}")
+        schema_hint = f"  `{pg_schema}.{entity['tableName']}`" if pg_schema else ""
+        st.markdown(f"Postgres table: {icon} {'found' if entity['postgresTableFound'] else '**NOT FOUND**'}{schema_hint}")
 
     entity_cols = [c for c in entity.get("columns", []) if c["overallStatus"] in status_filter]
     if not show_ok_cols:
@@ -145,9 +149,13 @@ def process_report(data: bytes):
             if col.get("isId"):         flags.append("PK")
             if col.get("isLob"):        flags.append("LOB")
             if col.get("isJoinColumn"): flags.append("FK")
+            ora_schema = entity.get("oracleSchemaName") or ""
+            pg_schema  = entity.get("postgresSchemaName") or ""
+            schema     = ora_schema or pg_schema
+            table_disp = f"{schema}.{entity['tableName']}" if schema else entity["tableName"]
             rows.append({
                 "Entity":        entity["entityClass"].split(".")[-1],
-                "Table":         entity["tableName"],
+                "Table":         table_disp,
                 "Java Field":    col["javaFieldName"],
                 "Java Column":   col["javaColumnName"],
                 "Java Type":     col["javaType"] + (" [" + ",".join(flags) + "]" if flags else ""),
@@ -564,7 +572,9 @@ with tab_entities:
     for entity in visible_entities[ent_start:ent_end]:
         estat       = entity["entityStatus"]
         short_class = entity["entityClass"].split(".")[-1]
-        label       = f"{STATUS_EMOJI.get(estat, '')} **{short_class}**  —  `{entity['tableName']}`"
+        schema      = entity.get("oracleSchemaName") or entity.get("postgresSchemaName") or ""
+        table_disp  = f"{schema}.{entity['tableName']}" if schema else entity["tableName"]
+        label       = f"{STATUS_EMOJI.get(estat, '')} **{short_class}**  —  `{table_disp}`"
         with st.expander(label, expanded=False):
             render_entity_detail(entity, project_root, ent_status, show_ok_cols, show_header=False)
 
