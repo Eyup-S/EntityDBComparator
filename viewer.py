@@ -400,7 +400,7 @@ with tab_overview:
     df_ov = df_ov[df_ov["Oracle ✓"].isin(ov_oracle)]
     df_ov = df_ov[df_ov["Postgres ✓"].isin(ov_pg)]
     if ov_java_type:
-        df_ov = df_ov[df_ov["Java Type"].str.split(" [").str[0].isin(ov_java_type)]
+        df_ov = df_ov[df_ov["Java Type"].str.split(" [", regex=False).str[0].isin(ov_java_type)]
     if ov_search:
         mask = (
             df_ov["Entity"].str.lower().str.contains(ov_search, na=False)
